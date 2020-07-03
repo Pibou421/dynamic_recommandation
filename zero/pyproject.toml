@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "mangaki-zero"
+version = "1.0.1"
+description = "Mangaki's recommandation algorithms"
+authors = ["Jill-Jênn Vie <vie@jill-jenn.net>"]
+license = "GPL-3.0"
+readme = "README.md"
+homepage = "http://research.mangaki.fr"
+documentation = "https://github.com/mangaki/zero"
+keywords = ["machine learning", "recommandation", "mangaki", "recommender systems", "algorithms"]
+
+packages = [
+  { include = "zero" }
+]
+
+
+[tool.poetry.dependencies]
+python = "^3.7"
+numpy = "^1.18"
+pandas = "^0.25.2"
+
+scikit-learn = { version="*", optional = true }
+tensorflow = { version="*", optional = true }
+fastFM = { version="*", optional = true }
+pywFM = { version="*", optional = true }
+surprise = { version="*", optional = true }
+scipy = "^1.4.1"
+
+[tool.poetry.extras]
+deep = ["tensorflow"]
+external = ["scikit-learn", "surprise"]
+fm = ["fastFM", "pywFM"]
+
+[tool.poetry.dev-dependencies]
+matplotlib = "^3.1"
+pytest = "^5.4.1"
+
+[build-system]
+requires = ["poetry>=0.12"]
+build-backend = "poetry.masonry.api"
