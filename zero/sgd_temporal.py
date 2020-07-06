@@ -34,8 +34,7 @@ class MangakiSGDTemporal:
                 #self.nabla_loss[i] += error * self.V[j]
                 #self.nabla_loss[i] *= self.gamma
                 self.U[i] -= self.gamma*error * self.V[j]
-            self.U[i] -=  self.lambda_*previousU
-            self.V[item] -=  (self.gamma*error * self.U[i] + self.lambda_*previousV)
+                self.V[j] -= self.gamma*error * self.U[i]
 
 
     def test_user(self, i, items, ratings, timestamps):
@@ -51,7 +50,6 @@ class MangakiSGDTemporal:
                 #self.nabla_loss[i] += error * self.V[j]
                 #self.nabla_loss[i] *= self.gamma
                 self.U[i] -= self.gamma*error * self.V[j]
-            self.U[i] -=  self.lambda_*previousU
             predictions.append(self.predict_one(i,j))
         return (predictions, ratings) #contains tuples of (estimation, rating) to assemble with ones from other users to compute RMSE
 
@@ -82,7 +80,9 @@ class MangakiSGDTemporal:
         dicts = self.split_into_training_and_testing_dictionnaries(users, items, ratings, timestamps)
         training_dict = dicts[0]
         testing_dict = dicts[1]
+        print("initialization done")
         self.fit_set(training_dict)
+        print("training done")
         rmse = self.test_set(testing_dict)
         return rmse
 
