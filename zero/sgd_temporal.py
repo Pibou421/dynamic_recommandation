@@ -5,7 +5,7 @@ from sklearn.metrics import mean_squared_error
 
 class MangakiSGDTemporal:
     def __init__(self, nb_users, nb_works, nb_components=20, nb_iterations=10,
-                 gamma=0.01, lambda_=0.1, temporal_hyperparameter = 0.1):
+                 gamma=0.01, lambda_=0.001, temporal_hyperparameter = 0.1):
         self.nb_components = nb_components
         self.nb_iterations = nb_iterations
         self.nb_users = nb_users
@@ -22,15 +22,33 @@ class MangakiSGDTemporal:
 
     def get_temp_factor(self, time_spent):
         if self.dynamic_strategy == "exponential":
+            return math.exp(abs(self.temporal_hyperparameter) * (-time_spent))
+        elif self.dynamic_strategy == "1 + exponential":
             return 1 + math.exp(abs(self.temporal_hyperparameter) * (-time_spent))
-        elif self.dynamic_strategy == "gamma power time":
-            return self.temporal_hyperparameter **(-time_spent)
 
     def get_temp_gradient(self, error, time_spent, temp_factor):
-        if self.dynamic_strategy == "exponential":
+        if self.dynamic_strategy == "exponential" or self.dynamic_strategy == "1 + exponential":
             return (self.gamma)*(error*error*(-time_spent)*temp_factor + self.lambda_ *self.temporal_hyperparameter)
-        elif self.dynamic_strategy == "gamma power time":
-            return 0
+
+    def fast_fit_user(self, i, items, ratings, timestamps):
+        first_element = True
+        u_gradient = np.zeros(self.nb_components)
+        for index in range(len(items)):
+            if first_element :
+                time_spent = 0
+                first_element = False
+            else:
+                time_spent = timestamps[index] - timestamps[index-1]
+            temp_factor = self.get_temp_factor(time_spent)
+            j = items[index]
+            predicted_rating = self.predict_one(i, j)
+            error = predicted_rating - ratings[index]
+            u_gradient = u_gradient * temp_factor
+            u_gradient += self.gamma*error * self.V[j]
+            self.U[i] -= (u_gradient + self.lambda_ * self.U[i])
+            self.V[j] -= self.gamma*(error * self.U[i]*temp_factor + self.lambda_ *self.V[j])
+            self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+
 
     def fit_user(self, i, items, ratings, timestamps):
         for index in range(len(items)):
@@ -38,17 +56,43 @@ class MangakiSGDTemporal:
             previous_ratings = ratings[:index+1]
             previous_timestamps = timestamps[:index+1]
             item = items[index]
-            #previousU = self.U[i]
-            #previousV = self.V[item]
+            #for subindex in range(index+1):
+            #    time_spent = timestamps[index] - timestamps[subindex]
+            #    temp_factor = self.get_temp_factor(time_spent)
+            #    j = items[subindex]
+            #    predicted_rating = self.predict_one(i, j)
+            #    error = predicted_rating - ratings[subindex]
+            #    self.U[i] -= self.gamma*error * self.V[j]*temp_factor
+            #    self.V[j] -= self.gamma*error * self.U[i]*temp_factor
+            #    self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
             for j, rating, timestamp in zip(previous_items, previous_ratings, previous_timestamps):
                 time_spent = timestamps[index] - timestamp
                 temp_factor = self.get_temp_factor(time_spent)
                 predicted_rating = self.predict_one(i, j)
                 error = predicted_rating - rating
-                self.U[i] -= self.gamma*error * self.V[j]*temp_factor
-                self.V[j] -= self.gamma*error * self.U[i]*temp_factor
+                self.U[i] -= self.gamma*(error * self.V[j]*temp_factor + self.lambda_ *self.U[i])
+                self.V[j] -= self.gamma*(error * self.U[i]*temp_factor + self.lambda_ *self.V[j])
                 self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
 
+    def fast_test_user(self, i, items, ratings, timestamps):
+        first_element = True
+        predictions = []
+        u_gradient = np.zeros(self.nb_components)
+        for index in range(len(items)):
+            if first_element :
+                time_spent = 0
+                first_element = False
+            else:
+                time_spent = timestamps[index] - timestamps[index-1]
+            temp_factor = self.get_temp_factor(time_spent)
+            j = items[index]
+            predicted_rating = self.predict_one(i, j)
+            error = predicted_rating - ratings[index]
+            u_gradient = u_gradient * temp_factor
+            u_gradient += self.gamma*error * self.V[j]
+            self.U[i] -= (u_gradient + self.lambda_ * self.U[i])
+            predictions.append(self.predict_one(i,j))
+        return (predictions, ratings)
 
 
     def test_user(self, i, items, ratings, timestamps):
@@ -63,7 +107,7 @@ class MangakiSGDTemporal:
                 temp_factor = self.get_temp_factor(time_spent)
                 predicted_rating = self.predict_one(i, j)
                 error = predicted_rating - rating
-                self.U[i] -= self.gamma*error * self.V[j]*temp_factor
+                self.U[i] -= self.gamma*(error * self.V[j]*temp_factor + self.lambda_ *self.U[i])
             predictions.append(self.predict_one(i,j))
         return (predictions, ratings) #contains tuples of (estimation, rating) to assemble with ones from other users to compute RMSE
 
@@ -75,7 +119,7 @@ class MangakiSGDTemporal:
             items = [a[0] for a in user_data]
             ratings = [a[1] for a in user_data]
             timestamps = [a[2] for a in user_data]
-            (user_predictions, user_ratings) = self.test_user(i, items, ratings, timestamps)
+            (user_predictions, user_ratings) = self.new_test_user(i, items, ratings, timestamps)
             predictions.append(user_predictions)
             ratings_predicted.append(user_ratings)
         flat_predictions = [item for sublist in predictions for item in sublist]
@@ -88,7 +132,7 @@ class MangakiSGDTemporal:
             items = [a[0] for a in user_data]
             ratings = [a[1] for a in user_data]
             timestamps = [a[2] for a in user_data]
-            self.fit_user(i, items, ratings, timestamps)
+            self.new_fit_user(i, items, ratings, timestamps)
 
     def global_test(self, users, items, ratings, timestamps):
         dicts = self.split_into_training_and_testing_dictionnaries(users, items, ratings, timestamps)
@@ -180,3 +224,24 @@ class MangakiSGDTemporal:
 
 
 #############################################################################################
+
+    def new_test_user(self, i, items, ratings, timestamps):
+        predictions = []
+        for j, rating, timestamp in zip(items, ratings, timestamps):
+            time_spent = timestamps[-1] - timestamp
+            temp_factor = self.get_temp_factor(time_spent)
+            predicted_rating = self.predict_one(i, j)
+            error = predicted_rating - rating
+            self.U[i] -= self.gamma*(error * self.V[j]*temp_factor+ self.lambda_ *self.U[i])
+            predictions.append(self.predict_one(i,j))
+        return (predictions, ratings) #contains tuples of (estimation, rating) to assemble with ones from other users to compute RMSE
+
+    def new_fit_user(self, i, items, ratings, timestamps):
+        for j, rating, timestamp in zip(items, ratings, timestamps):
+            time_spent = timestamps[-1] - timestamp
+            temp_factor = self.get_temp_factor(time_spent)
+            predicted_rating = self.predict_one(i, j)
+            error = predicted_rating - rating
+            self.U[i] -= self.gamma*(error * self.V[j]*temp_factor + self.lambda_ *self.U[i])
+            self.V[j] -= self.gamma*(error * self.U[i]*temp_factor + self.lambda_ *self.V[j])
+            self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
