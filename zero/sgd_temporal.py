@@ -13,12 +13,24 @@ class MangakiSGDTemporal:
         self.gamma = gamma
         self.lambda_ = lambda_
         self.temporal_hyperparameter = temporal_hyperparameter
+        self.dynamic_strategy = "exponential"
         # self.bias = np.random.random()
         # self.bias_u = np.random.random(self.nb_users)
         # self.bias_v = np.random.random(self.nb_works)
-        #self.nabla_loss = np.zeros((self.nb_users, self.nb_components))
         self.U = np.random.random((self.nb_users, self.nb_components))
         self.V = np.random.random((self.nb_works, self.nb_components))
+
+    def get_temp_factor(self, time_spent):
+        if self.dynamic_strategy == "exponential":
+            return 1 + math.exp(abs(self.temporal_hyperparameter) * (-time_spent))
+        elif self.dynamic_strategy == "gamma power time":
+            return self.temporal_hyperparameter **(-time_spent)
+
+    def get_temp_gradient(self, error, time_spent, temp_factor):
+        if self.dynamic_strategy == "exponential":
+            return (self.gamma)*(error*error*(-time_spent)*temp_factor + self.lambda_ *self.temporal_hyperparameter)
+        elif self.dynamic_strategy == "gamma power time":
+            return 0
 
     def fit_user(self, i, items, ratings, timestamps):
         for index in range(len(items)):
@@ -26,15 +38,17 @@ class MangakiSGDTemporal:
             previous_ratings = ratings[:index+1]
             previous_timestamps = timestamps[:index+1]
             item = items[index]
-            previousU = self.U[i]
-            previousV = self.V[item]
+            #previousU = self.U[i]
+            #previousV = self.V[item]
             for j, rating, timestamp in zip(previous_items, previous_ratings, previous_timestamps):
+                time_spent = timestamps[index] - timestamp
+                temp_factor = self.get_temp_factor(time_spent)
                 predicted_rating = self.predict_one(i, j)
                 error = predicted_rating - rating
-                #self.nabla_loss[i] += error * self.V[j]
-                #self.nabla_loss[i] *= self.gamma
-                self.U[i] -= self.gamma*error * self.V[j]
-                self.V[j] -= self.gamma*error * self.U[i]
+                self.U[i] -= self.gamma*error * self.V[j]*temp_factor
+                self.V[j] -= self.gamma*error * self.U[i]*temp_factor
+                self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+
 
 
     def test_user(self, i, items, ratings, timestamps):
@@ -45,11 +59,11 @@ class MangakiSGDTemporal:
             previous_timestamps = timestamps[:index+1]
             previousU = self.U[i]
             for j, rating, timestamp in zip(previous_items, previous_ratings, previous_timestamps):
+                time_spent = timestamps[index] - timestamp
+                temp_factor = self.get_temp_factor(time_spent)
                 predicted_rating = self.predict_one(i, j)
                 error = predicted_rating - rating
-                #self.nabla_loss[i] += error * self.V[j]
-                #self.nabla_loss[i] *= self.gamma
-                self.U[i] -= self.gamma*error * self.V[j]
+                self.U[i] -= self.gamma*error * self.V[j]*temp_factor
             predictions.append(self.predict_one(i,j))
         return (predictions, ratings) #contains tuples of (estimation, rating) to assemble with ones from other users to compute RMSE
 
@@ -83,6 +97,7 @@ class MangakiSGDTemporal:
         print("initialization done")
         self.fit_set(training_dict)
         print("training done")
+        print(self.temporal_hyperparameter)
         rmse = self.test_set(testing_dict)
         return rmse
 
@@ -119,6 +134,13 @@ class MangakiSGDTemporal:
 
 #utils
 
+    def add_in_ordered_list_of_3_uplets(self, list, item):
+        (a,b,c) = item
+        i=0
+        while i<len(list) and c > list[i][2] :
+            i+=1
+        list.insert(i, item)
+
     def split_list_into_users_dict(self, users, items, ratings, timestamps):
         dict = {}
         for (i,j,r,t) in zip(users, items, ratings, timestamps) :
@@ -146,13 +168,15 @@ class MangakiSGDTemporal:
         for (i,j,r,t) in zip(users, items, ratings, timestamps) :
             if i in training_users :
                 if i in training_dict :
-                    training_dict[i].append([j,r,t])
+                    self.add_in_ordered_list_of_3_uplets(training_dict[i],(j,r,t))
                 else :
-                    training_dict[i] = [[j,r,t]]
+                    training_dict[i] = [(j,r,t)]
             else :
                 if i in testing_dict :
-                    testing_dict[i].append([j,r,t])
+                    self.add_in_ordered_list_of_3_uplets(testing_dict[i],(j,r,t))
                 else :
-                    testing_dict[i] = [[j,r,t]]
+                    testing_dict[i] = [(j,r,t)]
         return (training_dict, testing_dict)
-        return 2
+
+
+#############################################################################################
