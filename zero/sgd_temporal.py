@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import math
+import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 
 class MangakiSGDTemporal:
@@ -304,6 +305,8 @@ class MangakiSGDTemporal:
         training_dict = dicts[0]
         testing_dict = dicts[1]
         print("initialization done")
+        train_rmse_list =[]
+        test_rmse_list = []
         for i in range(self.nb_iterations):
             train_rmse = self.new_fit_set(training_dict)
             if self.dynamic_strategy == "exponential factor" :
@@ -314,4 +317,13 @@ class MangakiSGDTemporal:
             print("training rmse = " + str(train_rmse))
             test_rmse = self.new_test_set(testing_dict)
             print("testing rmse = " + str(test_rmse))
+            train_rmse_list.append(train_rmse)
+            test_rmse_list.append(test_rmse)
+        iterations_array = np.arange(self.nb_iterations)
+        plt.plot(iterations_array, train_rmse_list, label = "train rmse")
+        plt.plot(iterations_array, test_rmse_list, label = "test rmse")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
+        axes = plt.gca()
+        axes.set_xlim([0, self.nb_iterations])
+        axes.set_ylim([0,2])
         return test_rmse
