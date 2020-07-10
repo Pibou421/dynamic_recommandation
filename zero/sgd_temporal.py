@@ -4,8 +4,8 @@ import math
 from sklearn.metrics import mean_squared_error
 
 class MangakiSGDTemporal:
-    def __init__(self, nb_users, nb_works, nb_components=20, nb_iterations=10,
-                 gamma=0.01, lambda_=0.001, temporal_hyperparameter = 0.1):
+    def __init__(self, nb_users, nb_works, nb_components=20, nb_iterations=20,
+                 gamma=0.01, lambda_=0.001, temporal_hyperparameter = 0.1, dynamic_strategy = "no temporal factor"):
         self.nb_components = nb_components
         self.nb_iterations = nb_iterations
         self.nb_users = nb_users
@@ -13,7 +13,9 @@ class MangakiSGDTemporal:
         self.gamma = gamma
         self.lambda_ = lambda_
         self.temporal_hyperparameter = temporal_hyperparameter
-        self.dynamic_strategy = "exponential"
+        self.temporal_hyperparameter_beta = temporal_hyperparameter
+        self.temporal_hyperparameter_c = temporal_hyperparameter
+        self.dynamic_strategy = dynamic_strategy
         # self.bias = np.random.random()
         # self.bias_u = np.random.random(self.nb_users)
         # self.bias_v = np.random.random(self.nb_works)
@@ -23,12 +25,18 @@ class MangakiSGDTemporal:
     def get_temp_factor(self, time_spent):
         if self.dynamic_strategy == "exponential":
             return math.exp(abs(self.temporal_hyperparameter) * (-time_spent))
-        elif self.dynamic_strategy == "1 + exponential":
-            return 1 + math.exp(abs(self.temporal_hyperparameter) * (-time_spent))
+        elif self.dynamic_strategy == "exponential factor":
+            return  math.exp(abs(self.temporal_hyperparameter_beta) * (-time_spent)) * abs(self.temporal_hyperparameter_c)
+        elif self.dynamic_strategy == "no temporal factor":
+            return 1
 
     def get_temp_gradient(self, error, time_spent, temp_factor):
-        if self.dynamic_strategy == "exponential" or self.dynamic_strategy == "1 + exponential":
-            return (self.gamma)*(error*error*(-time_spent)*temp_factor + self.lambda_ *self.temporal_hyperparameter)
+        if self.dynamic_strategy == "exponential":
+            return (self.gamma)*(error*error*(-time_spent)*temp_factor + self.lambda_ *abs(self.temporal_hyperparameter))
+        elif self.dynamic_strategy == "exponential factor":
+            return ((self.gamma)*(error*error*(-time_spent)*temp_factor + self.lambda_ *abs(self.temporal_hyperparameter_beta)), self.gamma/100 * (error * error * math.exp(abs(self.temporal_hyperparameter_beta) * (-time_spent)) + self.lambda_*abs(self.temporal_hyperparameter_c)))
+        elif self.dynamic_strategy == "no temporal factor":
+            return 1
 
     def fast_fit_user(self, i, items, ratings, timestamps):
         first_element = True
@@ -47,7 +55,13 @@ class MangakiSGDTemporal:
             u_gradient += self.gamma*error * self.V[j]
             self.U[i] -= (u_gradient + self.lambda_ * self.U[i])
             self.V[j] -= self.gamma*(error * self.U[i]*temp_factor + self.lambda_ *self.V[j])
-            self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+            if self.dynamic_strategy == "exponential factor" :
+                (delta_beta,delta_c)=self.get_temp_gradient(error, time_spent, temp_factor)
+                self.temporal_hyperparameter_c -= delta_c
+                self.temporal_hyperparameter_beta -= delta_beta
+            elif self.dynamic_strategy == "exponential":
+                self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+            predictions.append(self.predict_one(i,j))
 
 
     def fit_user(self, i, items, ratings, timestamps):
@@ -119,7 +133,7 @@ class MangakiSGDTemporal:
             items = [a[0] for a in user_data]
             ratings = [a[1] for a in user_data]
             timestamps = [a[2] for a in user_data]
-            (user_predictions, user_ratings) = self.new_test_user(i, items, ratings, timestamps)
+            (user_predictions, user_ratings) = self.test_user(i, items, ratings, timestamps)
             predictions.append(user_predictions)
             ratings_predicted.append(user_ratings)
         flat_predictions = [item for sublist in predictions for item in sublist]
@@ -132,7 +146,7 @@ class MangakiSGDTemporal:
             items = [a[0] for a in user_data]
             ratings = [a[1] for a in user_data]
             timestamps = [a[2] for a in user_data]
-            self.new_fit_user(i, items, ratings, timestamps)
+            self.fit_user(i, items, ratings, timestamps)
 
     def global_test(self, users, items, ratings, timestamps):
         dicts = self.split_into_training_and_testing_dictionnaries(users, items, ratings, timestamps)
@@ -237,6 +251,7 @@ class MangakiSGDTemporal:
         return (predictions, ratings) #contains tuples of (estimation, rating) to assemble with ones from other users to compute RMSE
 
     def new_fit_user(self, i, items, ratings, timestamps):
+        predictions = []
         for j, rating, timestamp in zip(items, ratings, timestamps):
             time_spent = timestamps[-1] - timestamp
             temp_factor = self.get_temp_factor(time_spent)
@@ -244,4 +259,59 @@ class MangakiSGDTemporal:
             error = predicted_rating - rating
             self.U[i] -= self.gamma*(error * self.V[j]*temp_factor + self.lambda_ *self.U[i])
             self.V[j] -= self.gamma*(error * self.U[i]*temp_factor + self.lambda_ *self.V[j])
-            self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+            if self.dynamic_strategy == "exponential factor" :
+                (delta_beta,delta_c)=self.get_temp_gradient(error, time_spent, temp_factor)
+                self.temporal_hyperparameter_c -= delta_c
+                self.temporal_hyperparameter_beta -= delta_beta
+            elif self.dynamic_strategy == "exponential":
+                self.temporal_hyperparameter -= self.get_temp_gradient(error, time_spent, temp_factor)
+            predictions.append(self.predict_one(i,j))
+        return (predictions, ratings)
+
+    def new_test_set(self, users_dict):
+        predictions = []
+        ratings_predicted = []
+        for i in users_dict.keys() :
+            user_data = users_dict[i]
+            items = [a[0] for a in user_data]
+            ratings = [a[1] for a in user_data]
+            timestamps = [a[2] for a in user_data]
+            (user_predictions, user_ratings) = self.new_test_user(i, items, ratings, timestamps)
+            predictions.append(user_predictions)
+            ratings_predicted.append(user_ratings)
+        flat_predictions = [item for sublist in predictions for item in sublist]
+        flat_ratings = [item for sublist in ratings_predicted for item in sublist]
+        return mean_squared_error(flat_predictions, flat_ratings) ** 0.5
+
+    def new_fit_set(self, users_dict):
+        predictions = []
+        ratings_predicted = []
+        for i in users_dict.keys() :
+            user_data = users_dict[i]
+            items = [a[0] for a in user_data]
+            ratings = [a[1] for a in user_data]
+            timestamps = [a[2] for a in user_data]
+            (user_predictions, user_ratings) = self.new_fit_user(i, items, ratings, timestamps)
+            predictions.append(user_predictions)
+            ratings_predicted.append(user_ratings)
+        flat_predictions = [item for sublist in predictions for item in sublist]
+        flat_ratings = [item for sublist in ratings_predicted for item in sublist]
+        return mean_squared_error(flat_predictions, flat_ratings) ** 0.5
+
+    def new_global_test(self, users, items, ratings, timestamps, dynamic_strategy = "no temporal factor"):
+        self.dynamic_strategy = dynamic_strategy
+        dicts = self.split_into_training_and_testing_dictionnaries(users, items, ratings, timestamps)
+        training_dict = dicts[0]
+        testing_dict = dicts[1]
+        print("initialization done")
+        for i in range(self.nb_iterations):
+            train_rmse = self.new_fit_set(training_dict)
+            if self.dynamic_strategy == "exponential factor" :
+                print(self.temporal_hyperparameter_c)
+                print(self.temporal_hyperparameter_beta)
+            elif self.dynamic_strategy == "exponential" :
+                print(self.temporal_hyperparameter)
+            print("training rmse = " + str(train_rmse))
+            test_rmse = self.new_test_set(testing_dict)
+            print("testing rmse = " + str(test_rmse))
+        return test_rmse
