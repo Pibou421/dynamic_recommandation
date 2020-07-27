@@ -25,6 +25,7 @@ train = ["arbre".zfill(7), "voiture", "maladie", "soutien"]
 TEXT.build_vocab(train)
 print(TEXT.numericalize(train))
 print('long', len(TEXT.vocab.stoi))
+print(TEXT.vocab.stoi)
 
 #ex = torchtext.data.Example.fromCSV('~/Téléchargements/dico.txt')
 #print(ex)
